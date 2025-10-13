@@ -31,7 +31,7 @@ st.markdown("""
             background-color: white !important;
         }
         div[data-testid="stDataFrame"] * {
-            color: white !important;
+            color: black !important;
         }
 
         /* Metriche e card */
@@ -43,7 +43,7 @@ st.markdown("""
         /* Rimuove eventuale overlay scuro del tema */
         [class*="st-emotion-cache"] {
             background-color: white !important;
-            color: white !important;
+            color: black !important;
         }
     </style>
 """, unsafe_allow_html=True)
