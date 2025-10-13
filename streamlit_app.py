@@ -1,32 +1,464 @@
 import streamlit as st
 import pandas as pd
+import plotly.express as px
+from math import radians, sin, cos, sqrt, atan2
+from geopy.geocoders import Nominatim
+from geopy.extra.rate_limiter import RateLimiter
+from datetime import datetime, timedelta
+import math
 
 st.set_page_config(page_title="Dashboard Activelabel", layout="wide")
-st.title("📊 Dashboard Activelabel")
+col1, col2 = st.columns([1, 4])
+with col1:
+    st.image("logo.png", width=250)
+with col2:
+    st.markdown(
+        """
+        <div style='display: flex; align-items: center; height: 100%; padding-top: 45px;'>
+            <h1 style='font-size: 60px; margin: 0;'>Dashboard Activelabel</h1>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 # Link al file Drive (pubblico, leggibile)
 file_id = "1Zp_2qP8Td1TVMdbY9mlzOHYxIlICmNZL"
 url = f"https://drive.google.com/uc?id={file_id}&export=download"
+
+geolocator = Nominatim(user_agent="dashboard_active_label")
+reverse = RateLimiter(geolocator.reverse, min_delay_seconds=1)
+
+def get_province(lat, lon):
+    try:
+        location = reverse((lat, lon), language="it")
+        if location and "address" in location.raw:
+            address = location.raw["address"]
+            # 🔍 Proviamo diversi campi in ordine di importanza
+            return (
+                address.get("state_district") or
+                address.get("county") or
+                address.get("state") or
+                address.get("region") or
+                address.get("city") or
+                address.get("town") or
+                address.get("village") or
+                address.get("municipality") or
+                address.get("country")
+            )
+    except Exception:
+        return None
+    return None
 
 try:
     # Caricamento del file
     df = pd.read_csv(url, sep=" ", header=None)
     df.columns = ["Operator", "Device", "Reading date", "Reading hour", "Read value", "Effective T", "QR", "Desired T",
                   "Item ID", "Writing date", "Writing hour", "LAT", "LON"]
-    
-    # Filtro per operatore
+
+    @st.cache_data(show_spinner="Determinazione province in corso...")
+    def get_province_cached(lat, lon):
+        try:
+            location = reverse((lat, lon), language="it")
+            if location and "address" in location.raw:
+                address = location.raw["address"]
+                # 🔍 Proviamo diversi campi in ordine di importanza
+                return (
+                        address.get("state_district") or
+                        address.get("county") or
+                        address.get("state") or
+                        address.get("region") or
+                        address.get("city") or
+                        address.get("town") or
+                        address.get("village") or
+                        address.get("municipality") or
+                        address.get("country")
+                )
+        except Exception:
+            return None
+        return None
+
+
+    # Applichiamo la funzione solo se LAT e LON sono validi
+    df["Province"] = df.apply(
+        lambda r: get_province_cached(r["LAT"], r["LON"]) if pd.notna(r["LAT"]) and pd.notna(r["LON"]) else None,
+        axis=1
+    )
+
+    mappa_prodotti = {
+        "B": {"nome": "Banana", "scadenza_giorni": 7},
+        "M": {"nome": "Mela", "scadenza_giorni": 10},
+        "A": {"nome": "Arancia", "scadenza_giorni": 14},
+        "L": {"nome": "Latte", "scadenza_giorni": 5},
+        "Y": {"nome": "Yogurt", "scadenza_giorni": 12},
+    }
+
+
+    def assegna_prodotto_e_scadenza(df):
+        df = df.copy()
+        df["Reading date"] = pd.to_datetime(df["Reading date"], errors="coerce")
+
+        prodotti, scadenze_iniziali, scadenze_residue = [], [], []
+        prima_lettura = {}
+
+        for _, row in df.iterrows():
+            qr_val = str(row.get("QR", "")).strip()
+            qr_val = qr_val.replace(" ", "").upper()
+
+            if not qr_val or qr_val == "NAN":
+                prodotti.append(None)
+                scadenze_iniziali.append(None)
+                scadenze_residue.append(None)
+                continue
+
+            iniziale = qr_val[0]
+            prodotto_info = mappa_prodotti.get(iniziale, {"nome": "Sconosciuto", "scadenza_giorni": 7})
+            nome_prodotto = prodotto_info["nome"]
+            giorni_scadenza = prodotto_info["scadenza_giorni"]
+
+            data_lettura = row["Reading date"]
+            if pd.isna(data_lettura):
+                prodotti.append(nome_prodotto)
+                scadenze_iniziali.append(None)
+                scadenze_residue.append(None)
+                continue
+
+            if qr_val not in prima_lettura:
+                prima_lettura[qr_val] = data_lettura
+                data_scadenza = data_lettura + timedelta(days=giorni_scadenza)
+                scadenza_residua = giorni_scadenza
+            else:
+                giorni_passati = (data_lettura - prima_lettura[qr_val]).days
+                scadenza_residua = giorni_scadenza - giorni_passati
+                data_scadenza = prima_lettura[qr_val] + timedelta(days=giorni_scadenza)
+
+            prodotti.append(nome_prodotto)
+            scadenze_iniziali.append(data_scadenza.date())
+            scadenze_residue.append(scadenza_residua)
+
+        df["Product"] = prodotti
+        df["Expiry date (initial)"] = scadenze_iniziali
+        df["Reading date"] = df["Reading date"].dt.strftime("%d/%m/%Y")
+        df["Expiry date (initial)"] = pd.to_datetime(df["Expiry date (initial)"], errors="coerce").dt.strftime("%d/%m/%Y")
+        df["Days left"] = scadenze_residue
+        return df
+
+    df = assegna_prodotto_e_scadenza(df)
+    with st.spinner("⏳ Calcolo colonne aggiuntive in corso..."):
+        df = assegna_prodotto_e_scadenza(df)
+        df["Province"] = df.apply(
+            lambda r: get_province_cached(r["LAT"], r["LON"]) if pd.notna(r["LAT"]) and pd.notna(r["LON"]) else None,
+            axis=1
+        )
+
+    def _expiry_factor_from_days(g):
+        if pd.isna(g):
+            return 0.0
+
+        g = float(g)
+
+        if g >= 14:
+            return 1.0
+        if g >= 0:
+            return 0.6 + 0.4 * (g / 14.0)
+        if g >= -7:
+            return 0.3 + (0.6 - 0.3) * ((g + 7.0) / 7.0)
+        if g >= -14:
+            return 0.25 + (0.3 - 0.25) * ((g + 14.0) / 7.0)
+        return max(0.0, 0.25 * math.exp((g + 14.0) / 14.0))
+
+
+    def calcola_indice_freschezza(row):
+        temp_diff = abs(row["Effective T"] - row["Desired T"])
+        temp_factor = max(0.0, 1.0 - (temp_diff / 10.0))
+        giorni_residui = row.get("Days left", 0)
+        expiry_factor = _expiry_factor_from_days(giorni_residui)
+        combined = (temp_factor ** 0.6) * (expiry_factor ** 1.0)
+
+        return round(100.0 * combined, 1)
+
+
+    def calcola_waste_cost(df):
+        prezzi_medi = {
+            "Banana": 0.3,
+            "Mela": 0.5,
+            "Arancia": 0.6,
+            "Latte": 1.2,
+            "Yogurt": 1.0,
+            "Sconosciuto": 0.5
+        }
+
+        prodotti_sprecati = df[df["indice_freschezza"] < 50]["Product"]
+        costo_totale = sum(prezzi_medi.get(p, 0.5) for p in prodotti_sprecati)
+        return round(costo_totale, 2)
+
+    #st.markdown("## 🚦 Executive Snapshot")
+
+    # Calcolo dell'indice di freschezza se non esiste ancora
+    if "indice_freschezza" not in df.columns:
+        df["indice_freschezza"] = df.apply(calcola_indice_freschezza, axis=1)
+
+    tipo = "Car"
+    fattori = {"Car": 0.12, "Truck": 0.6, "Refrigerated Truck": 0.9}
+    fattore_emissione = fattori[tipo]
+
+    # --- Calcolo metriche generali su tutti i dati ---
+    total_shipments = len(df)
+    compliant = len(df[df["indice_freschezza"] >= 50])
+    incidenti = len(df[df["indice_freschezza"] < 50])
+    waste_cost = calcola_waste_cost(df)  # esempio: 10€ per prodotto "non conforme"
+
+    perc_compliant = (compliant / total_shipments * 100) if total_shipments > 0 else 0
+    perc_incident = (incidenti / total_shipments * 100) if total_shipments > 0 else 0
+
+    st.markdown("""
+        <style>
+            .snapshot-title {
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 42px;
+                font-weight: 700;
+                text-align: center;
+                color: #2E4053;
+                letter-spacing: 1px;
+                margin-top: 10px;
+                margin-bottom: 30px;
+            }
+            div[data-testid="stMetric"] {
+                background-color: #f8f9fa;
+                border-radius: 18px;
+                padding: 20px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                text-align: center;
+                transition: all 0.2s ease-in-out;
+            }
+            div[data-testid="stMetric"]:hover {
+                transform: translateY(-4px);
+                box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+            }
+            @media (max-width: 900px) {
+                div[data-testid="column"] {
+                    flex: 1 1 50% !important;
+                    min-width: 240px !important;
+                }
+            }
+            @media (max-width: 600px) {
+                div[data-testid="column"] {
+                    flex: 1 1 100% !important;
+                }
+            }
+        </style>
+        <div class="snapshot-title">🚦 Executive Snapshot</div>
+    """, unsafe_allow_html=True)
+
+    # --- Layout colonne metriche ---
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("✅ % Compliant Shipments", f"{perc_compliant:.1f}%")
+    with col2:
+        st.metric("⚠️ % Shipments with Incidents", f"{perc_incident:.1f}%")
+    with col3:
+        st.metric("📦 Total Shipments", total_shipments)
+    with col4:
+        st.metric("💸 Total Waste Cost (€)", f"{waste_cost:,.2f}")
+
+    st.markdown("---")
+
     operatore = st.text_input("Filtra per operatore (es: Ricci, Chiriu, Pinna)")
-    if operatore:
-        df = df[df["Operator"].str.lower() == operatore.lower()]
+    filtered = df[df["Operator"].str.lower() == operatore.lower()] if operatore else df
 
-    st.dataframe(df)
+    st.dataframe(filtered)
 
-    # Mostra mappa se ci sono coordinate valide
-    if not df.empty and "LAT" in df.columns and "LON" in df.columns:
-        with st.expander("📍 Mappa"):
-            st.map(df[["LAT", "LON"]])
+    unique_qr = filtered["QR"].dropna().unique().tolist()
+    selected_qr = st.selectbox("Seleziona QR per visualizzare solo le sue scansioni", ["Tutti"] + unique_qr)
+
+    if selected_qr != "Tutti":
+        map_data = filtered[filtered["QR"] == selected_qr]
+        st.info(f"Mostrando lo storico e le posizioni delle scansioni per QR: **{selected_qr}**")
+
+        # --- 📜 Storico delle scansioni ---
+        storico = (
+            map_data.sort_values("Reading date", ascending=True)
+            [["Reading date", "Reading hour", "Operator", "Product", "Expiry date (initial)", "Days left",
+              "Effective T", "Desired T", "Item ID", "LAT", "LON", "Province"]]
+        )
+
+        st.subheader("📜 Scan History")
+        st.dataframe(
+            storico,
+            use_container_width=True,
+            hide_index=True
+        )
+
+        # --- Zoom più vicino sulla mappa ---
+        map_zoom = 6
+    else:
+        map_data = filtered
+        map_zoom = 4
+
+    # --- Mappa con Plotly ---
+    if not map_data.empty and "LAT" in map_data.columns and "LON" in map_data.columns:
+        map_data["indice_freschezza"] = map_data.apply(calcola_indice_freschezza, axis=1)
+
+        fig_map = px.scatter_mapbox(
+            map_data,
+            lat="LAT",
+            lon="LON",
+            color="indice_freschezza",
+            hover_data=[
+                "QR",
+                "Item ID",
+                "Product",
+                "Desired T",
+                "Effective T",
+                "Days left",
+                "indice_freschezza",
+                "Operator",
+                "Province",
+                "Reading date",
+                "Reading hour"
+            ],
+            color_continuous_scale="RdYlGn",
+            range_color=(0, 100),
+            mapbox_style="open-street-map",
+            zoom=map_zoom,
+            height=550
+        )
+
+        fig_map.update_traces(marker=dict(size=15, opacity=0.85))
+        fig_map.update_layout(
+            legend=dict(title="Indice di freschezza", yanchor="bottom", y=0.01, xanchor="left", x=0.01),
+            margin=dict(l=0, r=0, t=30, b=0)
+        )
+
+        config = {
+            "scrollZoom": True,
+            "displayModeBar": True,
+            "displaylogo": False,
+            "modeBarButtonsToRemove": ["lasso2d", "select2d", "zoomIn2d", "zoomOut2d"]
+        }
+
+        st.subheader("🗺️ Geolocation of QR Scans")
+        st.plotly_chart(fig_map, use_container_width=True, config=config)
 
 except Exception as e:
     st.error(f"Errore nel caricamento del file: {e}")
 
+# --- Riepilogo freschezza per QR (solo temperature) ---
+st.markdown("---")
+st.subheader("❄️ QR Freshness Summary")
 
+# Convertiamo le date in datetime per ordinamento
+df["Reading date"] = pd.to_datetime(df["Reading date"], errors="coerce")
+
+# Prendiamo l'ultima scansione per ogni QR
+last_scans = (
+    df.sort_values("Reading date")
+      .groupby("QR")
+      .tail(1)
+      .copy()
+)
+
+# Calcolo dell'indice di freschezza
+last_scans["indice_freschezza"] = last_scans.apply(calcola_indice_freschezza, axis=1)
+
+# Aggiungiamo una valutazione qualitativa
+def freshness_status(value):
+    if value >= 80:
+        return "🟢 Excellent"
+    elif value >= 50:
+        return "🟡 Moderate"
+    else:
+        return "🔴 Poor"
+
+last_scans["Status"] = last_scans["indice_freschezza"].apply(freshness_status)
+
+# 🔎 Se è stato selezionato un QR, filtriamo la tabella, altrimenti mostriamo tutti
+if selected_qr != "Tutti":
+    summary_data = last_scans[last_scans["QR"] == selected_qr]
+    st.caption(f"Showing latest freshness data for QR **{selected_qr}**")
+else:
+    summary_data = last_scans
+    st.caption("Showing latest freshness data for all QR codes")
+
+# Mostriamo la tabella riassuntiva
+cols = ["QR", "Desired T", "Effective T", "indice_freschezza", "Status"]
+st.dataframe(
+    summary_data[cols].sort_values("indice_freschezza"),
+    use_container_width=True,
+    hide_index=True
+)
+
+def haversine(lat1, lon1, lat2, lon2):
+    R = 6371.0  # Raggio terrestre in km
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlon = lon2 - lon1
+    dlat = lat2 - lat1
+    a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+    c = 2 * atan2(sqrt(a), sqrt(1 - a))
+    return R * c
+
+
+# --- Calcolo distanza per ogni veicolo e ripartizione CO₂ tra i QR ---
+distances = []
+for operator, group_op in df.groupby("Operator"):
+    group_op = group_op.sort_values("Reading date")
+    total_dist = 0.0
+    coords = list(zip(group_op["LAT"], group_op["LON"]))
+
+    # Calcolo distanza totale percorsa dall'operatore
+    for i in range(1, len(coords)):
+        if all(not pd.isna(x) for x in (*coords[i-1], *coords[i])):
+            total_dist += haversine(coords[i-1][0], coords[i-1][1], coords[i][0], coords[i][1])
+
+    # --- Emissioni totali dell'operatore ---
+    qrs = group_op["QR"].dropna().unique()
+    distances.append({
+        "Operator": operator,
+        "Distanza_km": total_dist,
+        "QR_list": qrs
+    })
+
+df_distance = pd.DataFrame(distances)
+
+# --- Selettore tipo di trasporto ---
+st.markdown("---")
+st.subheader("🌱 CO₂ Emissions by QR (based on travelled distance)")
+
+tipo = st.selectbox("Transport type", ["Car", "Truck", "Refrigerated Truck"])
+fattori = {"Car": 0.12, "Truck": 0.6, "Refrigerated Truck": 0.9}
+fattore_emissione = fattori[tipo]
+
+# --- Calcolo emissioni CO₂ e ripartizione tra QR ---
+expanded_rows = []
+for _, row in df_distance.iterrows():
+    emissioni_totali = row["Distanza_km"] * fattore_emissione
+    qrs = row["QR_list"]
+    if len(qrs) > 0:
+        emissioni_per_qr = emissioni_totali / len(qrs)
+        for qr in qrs:
+            expanded_rows.append({
+                "Operator": row["Operator"],
+                "QR": qr,
+                "Distanza_km": row["Distanza_km"],
+                "Emissioni_CO2_kg": emissioni_per_qr
+            })
+
+df_emissioni = pd.DataFrame(expanded_rows)
+
+# --- 🔍 Filtra per QR selezionato (come mappa/storico/freschezza) ---
+if selected_qr != "Tutti":
+    df_emissioni_filtered = df_emissioni[df_emissioni["QR"] == selected_qr]
+    st.caption(f"Showing CO₂ emissions data for QR **{selected_qr}**")
+else:
+    df_emissioni_filtered = df_emissioni
+    st.caption("Showing CO₂ emissions data for all QR codes")
+
+# --- Visualizzazione tabella ---
+st.dataframe(
+    df_emissioni_filtered.sort_values("Emissioni_CO2_kg", ascending=False),
+    use_container_width=True,
+    hide_index=True
+)
+
+# --- Metrica totale ---
+totale_co2 = df_emissioni_filtered["Emissioni_CO2_kg"].sum()
+st.metric("Total estimated CO₂", f"{totale_co2:.2f} kg")
