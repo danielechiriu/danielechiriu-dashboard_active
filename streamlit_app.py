@@ -9,6 +9,44 @@ import math
 from openai import OpenAI
 
 st.set_page_config(page_title="Dashboard Activelabel", layout="wide")
+st.markdown("""
+    <style>
+        /* Sfondo principale e contenitori */
+        body, .stApp {
+            background-color: white !important;
+            color: black !important;
+        }
+
+        /* Testo e componenti principali */
+        [data-testid="stHeader"], [data-testid="stToolbar"] {
+            background-color: white !important;
+        }
+
+        [data-testid="stSidebar"], section[data-testid="stSidebar"] {
+            background-color: #f8f9fa !important;
+        }
+
+        /* Tabelle e widget */
+        div[data-testid="stDataFrame"] {
+            background-color: white !important;
+        }
+        div[data-testid="stDataFrame"] * {
+            color: black !important;
+        }
+
+        /* Metriche e card */
+        div[data-testid="stMetric"] {
+            background-color: #f8f9fa !important;
+            color: #2E4053 !important;
+        }
+
+        /* Rimuove eventuale overlay scuro del tema */
+        [class*="st-emotion-cache"] {
+            background-color: white !important;
+            color: black !important;
+        }
+    </style>
+""", unsafe_allow_html=True)
 col1, col2 = st.columns([1, 4])
 with col1:
     st.image("logo.png", width=250)
