@@ -6,6 +6,7 @@ from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
 from datetime import datetime, timedelta
 import math
+from openai import OpenAI
 
 st.set_page_config(page_title="Dashboard Activelabel", layout="wide")
 col1, col2 = st.columns([1, 4])
@@ -20,6 +21,21 @@ with col2:
         """,
         unsafe_allow_html=True
     )
+
+st.markdown("""
+<style>
+div[data-testid="stDataFrame"] table {
+    border-radius: 10px;
+    border: 1px solid #ddd;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+}
+thead tr th {
+    background-color: #f4f6f8 !important;
+    color: #2E4053 !important;
+    font-weight: bold !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # Link al file Drive (pubblico, leggibile)
 file_id = "1Zp_2qP8Td1TVMdbY9mlzOHYxIlICmNZL"
@@ -325,8 +341,9 @@ try:
 
         fig_map.update_traces(marker=dict(size=15, opacity=0.85))
         fig_map.update_layout(
-            legend=dict(title="Indice di freschezza", yanchor="bottom", y=0.01, xanchor="left", x=0.01),
-            margin=dict(l=0, r=0, t=30, b=0)
+            mapbox_style="carto-positron",
+            margin=dict(l=0, r=0, t=30, b=0),
+            paper_bgcolor="#f9f9f9"
         )
 
         config = {
@@ -423,6 +440,28 @@ df_distance = pd.DataFrame(distances)
 st.markdown("---")
 st.subheader("🌱 CO₂ Emissions by QR (based on travelled distance)")
 
+col1, col2, col3 = st.columns([1.5, 1.5, 1])
+# 1️⃣ Filtra per operatore
+operatori = sorted(df_distance["Operator"].dropna().unique().tolist())
+selected_operator = col1.multiselect("👷 Operatore", operatori, help="Seleziona uno o più operatori")
+# 2️⃣ Determina i QR disponibili in base all'operatore selezionato
+if selected_operator:
+    qrs_filtrabili = sorted([
+        qr
+        for op in selected_operator
+        for qr_list in df_distance.loc[df_distance["Operator"] == op, "QR_list"]
+        for qr in qr_list
+    ])
+else:
+    # Nessun operatore selezionato → mostra tutti i QR
+    qrs_filtrabili = sorted(df["QR"].dropna().unique().tolist())
+
+selected_qr_filter = col2.multiselect("🔢 QR Code", qrs_filtrabili, help="Filtra per codice QR")
+
+# 3️⃣ Filtro per intervallo di distanza
+min_dist, max_dist = float(df_distance["Distanza_km"].min()), float(df_distance["Distanza_km"].max())
+selected_distance = col3.slider("🚚 Distanza (km)", min_dist, max_dist, (min_dist, max_dist))
+
 tipo = st.selectbox("Transport type", ["Car", "Truck", "Refrigerated Truck"])
 fattori = {"Car": 0.12, "Truck": 0.6, "Refrigerated Truck": 0.9}
 fattore_emissione = fattori[tipo]
@@ -444,13 +483,14 @@ for _, row in df_distance.iterrows():
 
 df_emissioni = pd.DataFrame(expanded_rows)
 
-# --- 🔍 Filtra per QR selezionato (come mappa/storico/freschezza) ---
-if selected_qr != "Tutti":
-    df_emissioni_filtered = df_emissioni[df_emissioni["QR"] == selected_qr]
-    st.caption(f"Showing CO₂ emissions data for QR **{selected_qr}**")
-else:
-    df_emissioni_filtered = df_emissioni
-    st.caption("Showing CO₂ emissions data for all QR codes")
+df_emissioni_filtered = df_emissioni.copy()
+if selected_operator:
+    df_emissioni_filtered = df_emissioni_filtered[df_emissioni_filtered["Operator"].isin(selected_operator)]
+if selected_qr_filter:
+    df_emissioni_filtered = df_emissioni_filtered[df_emissioni_filtered["QR"].isin(selected_qr_filter)]
+df_emissioni_filtered = df_emissioni_filtered[
+    df_emissioni_filtered["Distanza_km"].between(*selected_distance)
+]
 
 # --- Visualizzazione tabella ---
 st.dataframe(
@@ -462,3 +502,83 @@ st.dataframe(
 # --- Metrica totale ---
 totale_co2 = df_emissioni_filtered["Emissioni_CO2_kg"].sum()
 st.metric("Total estimated CO₂", f"{totale_co2:.2f} kg")
+
+# --- Sezione finale: AI Analyst ---
+st.markdown("---")
+st.subheader("🤖 AI Analyst")
+
+st.markdown(
+    "Clicca **Analizza Dashboard** per generare automaticamente un report "
+    "basato sui dati elaborati (freschezza, emissioni, spedizioni, operatori)."
+)
+
+api_key = st.secrets["OPENAI_API_KEY"]
+
+if api_key is None:
+    st.warning("⚠️ Nessuna API Key configurata. Inseriscila in Streamlit Secrets o direttamente nel codice.")
+else:
+    client = OpenAI(api_key=api_key)
+
+    if "report_generato" not in st.session_state:
+        st.session_state.report_generato = False
+
+    # 3️⃣ Pulsante per generare il report
+    if st.button("📊 Report Dashboard"):
+        with st.spinner("Analisi in corso..."):
+            # Prepara i dati sintetici
+            sintesi = {
+                "Totale spedizioni": len(df),
+                "% compliant": round(perc_compliant, 2),
+                "% incidenti": round(perc_incident, 2),
+                "Costo sprechi (€)": waste_cost,
+                "CO2 totale stimata (kg)": round(totale_co2, 2),
+                "Media indice freschezza": round(df["indice_freschezza"].mean(), 2),
+                "Operatori unici": df["Operator"].nunique(),
+                "Prodotti analizzati": df["Product"].nunique(),
+            }
+
+            prompt = f"""Sei un data analyst. Analizza i dati seguenti e genera un report completo, con osservazioni e raccomandazioni. Dati sintetici: {sintesi}
+                        Rispondi in modo chiaro e strutturato, suddividendo in:
+                        - Panoramica generale
+                        - Punti critici o anomalie
+                        - Raccomandazioni operative"""
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system",
+                     "content": "Sei un analista esperto di logistica e qualità del trasporto alimentare."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.5,
+            )
+
+            report = response.choices[0].message.content
+            st.session_state.report_generato = True
+            st.session_state.report_ai = report
+
+    # 4️⃣ Mostra il report se generato
+    if st.session_state.report_generato:
+        st.success("✅ Analisi completata")
+        st.markdown("### 📈 Report AI")
+        st.write(st.session_state.report_ai)
+
+        # 5️⃣ Solo dopo il report → mostra la sezione chat
+        st.markdown("### 💬 Chiedi altro sui dati")
+        user_question = st.text_input("Scrivi una domanda (es. 'Quale prodotto ha la freschezza media più bassa?')")
+
+        if user_question:
+            with st.spinner("Elaborazione risposta..."):
+                context = df.describe(include="all").to_string()
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {"role": "system",
+                         "content": "Sei un assistente analitico che risponde su dati di logistica e qualità alimentare."},
+                        {"role": "user", "content": f"Domanda: {user_question}\n\nContesto dati:\n{context}"}
+                    ],
+                    temperature=0.4,
+                )
+                answer = response.choices[0].message.content
+                st.markdown("### 🔍 Risposta AI")
+                st.write(answer)
