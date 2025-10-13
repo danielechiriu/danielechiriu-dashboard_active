@@ -542,81 +542,81 @@ totale_co2 = df_emissioni_filtered["Emissioni_CO2_kg"].sum()
 st.metric("Total estimated CO₂", f"{totale_co2:.2f} kg")
 
 # --- Sezione finale: AI Analyst ---
-st.markdown("---")
-st.subheader("🤖 AI Analyst")
+ai_container = st.container()
 
-st.markdown(
-    "Clicca **Analizza Dashboard** per generare automaticamente un report "
-    "basato sui dati elaborati (freschezza, emissioni, spedizioni, operatori)."
-)
+with ai_container:
+    st.markdown("---")
+    st.subheader("🤖 AI Analyst")
 
-api_key = st.secrets["OPENAI_API_KEY"]
+    st.markdown(
+        "Clicca **Analizza Dashboard** per generare automaticamente un report "
+        "basato sui dati elaborati (freschezza, emissioni, spedizioni, operatori)."
+    )
 
-if api_key is None:
-    st.warning("⚠️ Nessuna API Key configurata. Inseriscila in Streamlit Secrets o direttamente nel codice.")
-else:
-    client = OpenAI(api_key=api_key)
+    api_key = st.secrets.get("OPENAI_API_KEY")
 
-    if "report_generato" not in st.session_state:
-        st.session_state.report_generato = False
+    if not api_key:
+        st.warning("⚠️ Nessuna API Key configurata. Inseriscila in Streamlit Secrets o direttamente nel codice.")
+    else:
+        client = OpenAI(api_key=api_key)
 
-    # 3️⃣ Pulsante per generare il report
-    if st.button("📊 Report Dashboard"):
-        with st.spinner("Analisi in corso..."):
-            # Prepara i dati sintetici
-            sintesi = {
-                "Totale spedizioni": len(df),
-                "% compliant": round(perc_compliant, 2),
-                "% incidenti": round(perc_incident, 2),
-                "Costo sprechi (€)": waste_cost,
-                "CO2 totale stimata (kg)": round(totale_co2, 2),
-                "Media indice freschezza": round(df["indice_freschezza"].mean(), 2),
-                "Operatori unici": df["Operator"].nunique(),
-                "Prodotti analizzati": df["Product"].nunique(),
-            }
+        if "report_generato" not in st.session_state:
+            st.session_state.report_generato = False
 
-            prompt = f"""Sei un data analyst. Analizza i dati seguenti e genera un report completo, con osservazioni e raccomandazioni. Dati sintetici: {sintesi}
-                        Rispondi in modo chiaro e strutturato, suddividendo in:
-                        - Panoramica generale
-                        - Punti critici o anomalie
-                        - Raccomandazioni operative"""
+        genera_report = st.button("📊 Report Dashboard")
 
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system",
-                     "content": "Sei un analista esperto di logistica e qualità del trasporto alimentare."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.5,
-            )
+        # Mostra spinner e genera solo al click
+        if genera_report:
+            with st.spinner("Analisi in corso..."):
+                sintesi = {
+                    "Totale spedizioni": len(df),
+                    "% compliant": round(perc_compliant, 2),
+                    "% incidenti": round(perc_incident, 2),
+                    "Costo sprechi (€)": waste_cost,
+                    "CO2 totale stimata (kg)": round(totale_co2, 2),
+                    "Media indice freschezza": round(df["indice_freschezza"].mean(), 2),
+                    "Operatori unici": df["Operator"].nunique(),
+                    "Prodotti analizzati": df["Product"].nunique(),
+                }
 
-            report = response.choices[0].message.content
-            st.session_state.report_generato = True
-            st.session_state.report_ai = report
+                prompt = f"""Sei un data analyst. Analizza i dati seguenti e genera un report completo, con osservazioni e raccomandazioni. Dati sintetici: {sintesi}
+                            Rispondi in modo chiaro e strutturato, suddividendo in:
+                            - Panoramica generale
+                            - Punti critici o anomalie
+                            - Raccomandazioni operative"""
 
-    # 4️⃣ Mostra il report se generato
-    if st.session_state.report_generato:
-        st.success("✅ Analisi completata")
-        st.markdown("### 📈 Report AI")
-        st.write(st.session_state.report_ai)
-
-        # 5️⃣ Solo dopo il report → mostra la sezione chat
-        st.markdown("### 💬 Chiedi altro sui dati")
-        user_question = st.text_input("Scrivi una domanda (es. 'Quale prodotto ha la freschezza media più bassa?')")
-
-        if user_question:
-            with st.spinner("Elaborazione risposta..."):
-                context = df.describe(include="all").to_string()
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system",
-                         "content": "Sei un assistente analitico che risponde su dati di logistica e qualità alimentare."},
-                        {"role": "user", "content": f"Domanda: {user_question}\n\nContesto dati:\n{context}"}
+                        {"role": "system", "content": "Sei un analista esperto di logistica e qualità del trasporto alimentare."},
+                        {"role": "user", "content": prompt}
                     ],
-                    temperature=0.4,
+                    temperature=0.5,
                 )
-                answer = response.choices[0].message.content
-                st.markdown("### 🔍 Risposta AI")
-                st.write(answer)
+
+                st.session_state.report_ai = response.choices[0].message.content
+                st.session_state.report_generato = True
+
+        # Mostra report se già generato
+        if st.session_state.report_generato:
+            st.success("✅ Analisi completata")
+            st.markdown("### 📈 Report AI")
+            st.write(st.session_state.report_ai)
+
+            st.markdown("### 💬 Chiedi altro sui dati")
+            user_question = st.text_input("Scrivi una domanda (es. 'Quale prodotto ha la freschezza media più bassa?')")
+
+            if user_question:
+                with st.spinner("Elaborazione risposta..."):
+                    context = df.describe(include="all").to_string()
+                    response = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[
+                            {"role": "system",
+                             "content": "Sei un assistente analitico che risponde su dati di logistica e qualità alimentare."},
+                            {"role": "user", "content": f"Domanda: {user_question}\n\nContesto dati:\n{context}"}
+                        ],
+                        temperature=0.4,
+                    )
+                    st.markdown("### 🔍 Risposta AI")
+                    st.write(response.choices[0].message.content)
