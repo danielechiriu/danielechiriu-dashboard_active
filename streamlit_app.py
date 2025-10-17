@@ -321,7 +321,12 @@ try:
     operatore = st.text_input("Filtra per operatore (es: Ricci, Chiriu, Pinna)")
     filtered = df[df["Operator"].str.lower() == operatore.lower()] if operatore else df
 
-    st.dataframe(filtered)
+    colonne_da_mostrare = [
+        "Operator", "Reading date", "Read value", "Effective T", "QR",
+        "Desired T", "Product", "indice_freschezza"
+    ]
+
+    st.dataframe(filtered[colonne_da_mostrare])
 
     unique_qr = filtered["QR"].dropna().unique().tolist()
     selected_qr = st.selectbox("Seleziona QR per visualizzare solo le sue scansioni", ["Tutti"] + unique_qr)
@@ -331,11 +336,7 @@ try:
         st.info(f"Mostrando lo storico e le posizioni delle scansioni per QR: **{selected_qr}**")
 
         # --- 📜 Storico delle scansioni ---
-        storico = (
-            map_data.sort_values("Reading date", ascending=True)
-            [["Reading date", "Reading hour", "Operator", "Product", "Expiry date (initial)", "Days left",
-              "Effective T", "Desired T", "Item ID", "LAT", "LON", "Province"]]
-        )
+        storico = map_data.sort_values("Reading date", ascending=True)
 
         st.subheader("📜 Scan History")
         st.dataframe(
@@ -406,6 +407,9 @@ st.subheader("❄️ QR Freshness Summary")
 # Convertiamo le date in datetime per ordinamento
 df["Reading date"] = pd.to_datetime(df["Reading date"], dayfirst=True, errors="coerce")
 
+first_scans = df.loc[df.groupby("QR")["Reading date"].idxmin()][["QR", "Reading date"]]
+first_scans = first_scans.rename(columns={"Reading date": "First Scan Date"})
+
 # Prendiamo l'ultima scansione per ogni QR
 last_scans = (
     df.sort_values("Reading date")
@@ -414,6 +418,7 @@ last_scans = (
       .copy()
 )
 
+last_scans = pd.merge(last_scans, first_scans, on="QR", how="left")
 # Calcolo dell'indice di freschezza
 last_scans["indice_freschezza"] = last_scans.apply(calcola_indice_freschezza, axis=1)
 
@@ -427,7 +432,8 @@ def freshness_status(value):
         return "🔴 Poor"
 
 last_scans["Status"] = last_scans["indice_freschezza"].apply(freshness_status)
-
+last_scans["First Scan Date"] = pd.to_datetime(last_scans["First Scan Date"]).dt.strftime('%d/%m/%Y')
+last_scans["Expiry date (initial)"] = pd.to_datetime(last_scans["Expiry date (initial)"]).dt.strftime('%d/%m/%Y')
 # 🔎 Se è stato selezionato un QR, filtriamo la tabella, altrimenti mostriamo tutti
 if selected_qr != "Tutti":
     summary_data = last_scans[last_scans["QR"] == selected_qr]
@@ -437,7 +443,13 @@ else:
     st.caption("Showing latest freshness data for all QR codes")
 
 # Mostriamo la tabella riassuntiva
-cols = ["QR", "Desired T", "Effective T", "indice_freschezza", "Status"]
+cols = ["QR", "First Scan Date", "Expiry date (initial)", "Days left", "Desired T", "Effective T", "indice_freschezza", "Status"]
+summary_data_display = summary_data[cols].rename(columns={
+    "First Scan Date": "First Scan Date",
+    "Expiry date (initial)": "Expiry Date",
+    "Days left": "Days Left"
+})
+
 st.dataframe(
     summary_data[cols].sort_values("indice_freschezza"),
     use_container_width=True,
