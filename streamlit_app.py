@@ -76,7 +76,8 @@ thead tr th {
 """, unsafe_allow_html=True)
 
 # Link al file Drive (pubblico, leggibile)
-file_id = "1Zp_2qP8Td1TVMdbY9mlzOHYxIlICmNZL"
+#file_id = "1Zp_2qP8Td1TVMdbY9mlzOHYxIlICmNZL"
+file_id = "1kLpYked6VIDSh4P7wfOtkGG3N-6K1KYO"
 url = f"https://drive.google.com/uc?id={file_id}&export=download"
 
 geolocator = Nominatim(user_agent="dashboard_active_label")
@@ -131,7 +132,6 @@ try:
             return None
         return None
 
-
     # Applichiamo la funzione solo se LAT e LON sono validi
     df["Province"] = df.apply(
         lambda r: get_province_cached(r["LAT"], r["LON"]) if pd.notna(r["LAT"]) and pd.notna(r["LON"]) else None,
@@ -144,12 +144,13 @@ try:
         "A": {"nome": "Arancia", "scadenza_giorni": 14},
         "L": {"nome": "Latte", "scadenza_giorni": 5},
         "Y": {"nome": "Yogurt", "scadenza_giorni": 12},
+        "P": {"nome": "Parmigiano", "scadenza_giorni": 24},
     }
-
+    scadenze_per_prodotto = {v["nome"]: v["scadenza_giorni"] for k, v in mappa_prodotti.items()}
 
     def assegna_prodotto_e_scadenza(df):
         df = df.copy()
-        df["Reading date"] = pd.to_datetime(df["Reading date"], errors="coerce")
+        df["Reading date"] = pd.to_datetime(df["Reading date"], dayfirst=True, errors="coerce")
 
         prodotti, scadenze_iniziali, scadenze_residue = [], [], []
         prima_lettura = {}
@@ -192,7 +193,7 @@ try:
         df["Product"] = prodotti
         df["Expiry date (initial)"] = scadenze_iniziali
         df["Reading date"] = df["Reading date"].dt.strftime("%d/%m/%Y")
-        df["Expiry date (initial)"] = pd.to_datetime(df["Expiry date (initial)"], errors="coerce").dt.strftime("%d/%m/%Y")
+        df["Expiry date (initial)"] = pd.to_datetime(df["Expiry date (initial)"], dayfirst=True, errors="coerce").dt.strftime("%d/%m/%Y")
         df["Days left"] = scadenze_residue
         return df
 
@@ -204,20 +205,20 @@ try:
             axis=1
         )
 
-    def _expiry_factor_from_days(g):
+
+    def _expiry_factor_from_days(g, initial_shelf_life):
         if pd.isna(g):
             return 0.0
-
+        if initial_shelf_life == 0:
+            return 0.0 if g < 0 else 1.0
         g = float(g)
-
-        if g >= 14:
-            return 1.0
         if g >= 0:
-            return 0.6 + 0.4 * (g / 14.0)
-        if g >= -7:
+            return 0.6 + 0.4 * (g / initial_shelf_life)
+        elif g >= -7:
             return 0.3 + (0.6 - 0.3) * ((g + 7.0) / 7.0)
-        if g >= -14:
+        elif g >= -14:
             return 0.25 + (0.3 - 0.25) * ((g + 14.0) / 7.0)
+
         return max(0.0, 0.25 * math.exp((g + 14.0) / 14.0))
 
 
@@ -225,9 +226,10 @@ try:
         temp_diff = abs(row["Effective T"] - row["Desired T"])
         temp_factor = max(0.0, 1.0 - (temp_diff / 10.0))
         giorni_residui = row.get("Days left", 0)
-        expiry_factor = _expiry_factor_from_days(giorni_residui)
+        nome_prodotto = row.get("Product", "Sconosciuto")
+        initial_shelf_life = scadenze_per_prodotto.get(nome_prodotto, 7)
+        expiry_factor = _expiry_factor_from_days(giorni_residui, initial_shelf_life)
         combined = (temp_factor ** 0.6) * (expiry_factor ** 1.0)
-
         return round(100.0 * combined, 1)
 
 
@@ -402,7 +404,7 @@ st.markdown("---")
 st.subheader("❄️ QR Freshness Summary")
 
 # Convertiamo le date in datetime per ordinamento
-df["Reading date"] = pd.to_datetime(df["Reading date"], errors="coerce")
+df["Reading date"] = pd.to_datetime(df["Reading date"], dayfirst=True, errors="coerce")
 
 # Prendiamo l'ultima scansione per ogni QR
 last_scans = (
@@ -498,7 +500,12 @@ selected_qr_filter = col2.multiselect("🔢 QR Code", qrs_filtrabili, help="Filt
 
 # 3️⃣ Filtro per intervallo di distanza
 min_dist, max_dist = float(df_distance["Distanza_km"].min()), float(df_distance["Distanza_km"].max())
-selected_distance = col3.slider("🚚 Distanza (km)", min_dist, max_dist, (min_dist, max_dist))
+
+if min_dist < max_dist:
+    selected_distance = col3.slider("🚚 Distanza (km)", min_dist, max_dist, (min_dist, max_dist))
+else:
+    col3.info("Filtro distanza non disponibile (dati insufficienti).")
+    selected_distance = (min_dist, max_dist)
 
 tipo = st.selectbox("Transport type", ["Car", "Truck", "Refrigerated Truck"])
 fattori = {"Car": 0.12, "Truck": 0.6, "Refrigerated Truck": 0.9}
