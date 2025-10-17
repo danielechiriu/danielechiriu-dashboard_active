@@ -247,8 +247,6 @@ try:
         costo_totale = sum(prezzi_medi.get(p, 0.5) for p in prodotti_sprecati)
         return round(costo_totale, 2)
 
-    #st.markdown("## 🚦 Executive Snapshot")
-
     # Calcolo dell'indice di freschezza se non esiste ancora
     if "indice_freschezza" not in df.columns:
         df["indice_freschezza"] = df.apply(calcola_indice_freschezza, axis=1)
@@ -326,14 +324,31 @@ try:
         "Desired T", "Product", "indice_freschezza"
     ]
 
-    st.dataframe(filtered[colonne_da_mostrare])
+    if 'selected_qr' not in st.session_state:
+        st.session_state.selected_qr = "Tutti"
+
+    st.write("Clicca su una riga per vedere lo storico e la mappa di quel QR.")
+
+    event = st.dataframe(
+        filtered[colonne_da_mostrare],
+        on_select="rerun",
+        selection_mode="single-row"
+    )
+
+    if event.selection.rows:
+        selected_row_index = event.selection.rows[0]
+        qr_from_click = filtered.iloc[selected_row_index]["QR"]
+        st.session_state.selected_qr = qr_from_click
 
     unique_qr = filtered["QR"].dropna().unique().tolist()
-    selected_qr = st.selectbox("Seleziona QR per visualizzare solo le sue scansioni", ["Tutti"] + unique_qr)
+    selected_qr = st.selectbox(
+        "Seleziona QR per visualizzare solo le sue scansioni (o clicca una riga nella tabella)",
+        ["Tutti"] + unique_qr,
+        key="selected_qr"
+    )
 
     if selected_qr != "Tutti":
         map_data = filtered[filtered["QR"] == selected_qr]
-        st.info(f"Mostrando lo storico e le posizioni delle scansioni per QR: **{selected_qr}**")
 
         # --- 📜 Storico delle scansioni ---
         storico = map_data.sort_values("Reading date", ascending=True)
@@ -344,8 +359,6 @@ try:
             use_container_width=True,
             hide_index=True
         )
-
-        # --- Zoom più vicino sulla mappa ---
         map_zoom = 6
     else:
         map_data = filtered
