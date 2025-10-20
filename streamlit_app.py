@@ -242,13 +242,13 @@ try:
             "Sconosciuto": 0.5
         }
 
-        prodotti_sprecati = df[df["indice_freschezza"] < 50]["Product"]
+        prodotti_sprecati = df[df["freshness_index"] < 50]["Product"]
         costo_totale = sum(prezzi_medi.get(p, 0.5) for p in prodotti_sprecati)
         return round(costo_totale, 2)
 
     # Calcolo dell'indice di freschezza se non esiste ancora
-    if "indice_freschezza" not in df.columns:
-        df["indice_freschezza"] = df.apply(calcola_indice_freschezza, axis=1)
+    if "freshness_index" not in df.columns:
+        df["freshness_index"] = df.apply(calcola_indice_freschezza, axis=1)
 
     tipo = "Car"
     fattori = {"Car": 0.12, "Truck": 0.6, "Refrigerated Truck": 0.9}
@@ -256,8 +256,8 @@ try:
 
     # --- Calcolo metriche generali su tutti i dati ---
     total_shipments = len(df)
-    compliant = len(df[df["indice_freschezza"] >= 50])
-    incidenti = len(df[df["indice_freschezza"] < 50])
+    compliant = len(df[df["freshness_index"] >= 50])
+    incidenti = len(df[df["freshness_index"] < 50])
     waste_cost = calcola_waste_cost(df)  # esempio: 10€ per prodotto "non conforme"
 
     perc_compliant = (compliant / total_shipments * 100) if total_shipments > 0 else 0
@@ -318,9 +318,9 @@ try:
     operatori_disponibili = sorted(df["Operator"].dropna().unique().tolist())
 
     operatori_selezionati = st.multiselect(
-        "Filtra per operatore",
+        "Filter by operator",
         operatori_disponibili,
-        help="Seleziona uno o più operatori per filtrare la tabella principale"
+        help="Select one or more operators to filter the main table"
     )
     if operatori_selezionati:
         filtered = df[df["Operator"].isin(operatori_selezionati)]
@@ -329,16 +329,16 @@ try:
 
     colonne_da_mostrare = [
         "Operator", "Reading date", "Read value", "Effective T", "QR",
-        "Desired T", "Product", "indice_freschezza"
+        "Desired T", "Product", "freshness_index"
     ]
 
     if 'selected_qr' not in st.session_state:
-        st.session_state.selected_qr = "Tutti"
+        st.session_state.selected_qr = "All"
 
     if 'df_selection' not in st.session_state:
         st.session_state.df_selection = []
 
-    st.write("Tabella delle ultime scansioni. Clicca su una riga per vedere lo storico e la mappa di quel QR.")
+    st.write("Table of recent scans. Click on a row to see the history and map of that QR code.")
 
     filtered_last_scan = filtered.dropna(subset=["Reading date"]) \
         .sort_values("Reading date") \
@@ -346,7 +346,7 @@ try:
         .tail(1)
 
     df_sorted = filtered_last_scan.copy()
-    if st.session_state.selected_qr != "Tutti":
+    if st.session_state.selected_qr != "All":
         df_sorted['_sort_key'] = (df_sorted['QR'] == st.session_state.selected_qr)
         df_sorted = df_sorted.sort_values(by='_sort_key', ascending=False).drop(columns=['_sort_key'])
 
@@ -367,23 +367,23 @@ try:
         st.session_state.selected_qr = qr_from_click
 
     elif not new_selection and old_selection:
-        st.session_state.selected_qr = "Tutti"
+        st.session_state.selected_qr = "All"
     st.session_state.df_selection = new_selection
 
     st.subheader("📜 Scan history and details")
     unique_qr = filtered["QR"].dropna().unique().tolist()
 
-    options = ["Tutti"] + unique_qr
+    options = ["All"] + unique_qr
     if st.session_state.selected_qr not in options:
-        st.session_state.selected_qr = "Tutti"
+        st.session_state.selected_qr = "All"
 
     selected_qr = st.selectbox(
-        "Seleziona QR per visualizzare solo le sue scansioni (o clicca una riga nella tabella)",
+        "Select QR to view only its scans (or click a row in the table)",
         options,
         key="selected_qr"
     )
 
-    if selected_qr != "Tutti":
+    if selected_qr != "All":
         map_data = filtered[filtered["QR"] == selected_qr]
 
         # --- 📜 Storico delle scansioni ---
@@ -401,13 +401,13 @@ try:
 
     # --- Mappa con Plotly ---
     if not map_data.empty and "LAT" in map_data.columns and "LON" in map_data.columns:
-        map_data["indice_freschezza"] = map_data.apply(calcola_indice_freschezza, axis=1)
+        map_data["freshness_index"] = map_data.apply(calcola_indice_freschezza, axis=1)
 
         fig_map = px.scatter_mapbox(
             map_data,
             lat="LAT",
             lon="LON",
-            color="indice_freschezza",
+            color="freshness_index",
             hover_data=[
                 "QR",
                 "Item ID",
@@ -415,7 +415,7 @@ try:
                 "Desired T",
                 "Effective T",
                 "Days left",
-                "indice_freschezza",
+                "freshness_index",
                 "Operator",
                 "Province",
                 "Reading date",
@@ -468,7 +468,7 @@ last_scans = (
 
 last_scans = pd.merge(last_scans, first_scans, on="QR", how="left")
 # Calcolo dell'indice di freschezza
-last_scans["indice_freschezza"] = last_scans.apply(calcola_indice_freschezza, axis=1)
+last_scans["freshness_index"] = last_scans.apply(calcola_indice_freschezza, axis=1)
 
 # Aggiungiamo una valutazione qualitativa
 def freshness_status(value):
@@ -479,11 +479,11 @@ def freshness_status(value):
     else:
         return "🔴 Poor"
 
-last_scans["Status"] = last_scans["indice_freschezza"].apply(freshness_status)
+last_scans["Status"] = last_scans["freshness_index"].apply(freshness_status)
 last_scans["First Scan Date"] = pd.to_datetime(last_scans["First Scan Date"]).dt.strftime('%d/%m/%Y')
 last_scans["Expiry date (initial)"] = pd.to_datetime(last_scans["Expiry date (initial)"]).dt.strftime('%d/%m/%Y')
 # 🔎 Se è stato selezionato un QR, filtriamo la tabella, altrimenti mostriamo tutti
-if selected_qr != "Tutti":
+if selected_qr != "All":
     summary_data = last_scans[last_scans["QR"] == selected_qr]
     st.caption(f"Showing latest freshness data for QR **{selected_qr}**")
 else:
@@ -491,7 +491,7 @@ else:
     st.caption("Showing latest freshness data for all QR codes")
 
 # Mostriamo la tabella riassuntiva
-cols = ["QR", "First Scan Date", "Expiry date (initial)", "Days left", "Desired T", "Effective T", "indice_freschezza", "Status"]
+cols = ["QR", "First Scan Date", "Expiry date (initial)", "Days left", "Desired T", "Effective T", "freshness_index", "Status"]
 summary_data_display = summary_data[cols].rename(columns={
     "First Scan Date": "First Scan Date",
     "Expiry date (initial)": "Expiry Date",
@@ -499,7 +499,7 @@ summary_data_display = summary_data[cols].rename(columns={
 })
 
 st.dataframe(
-    summary_data[cols].sort_values("indice_freschezza"),
+    summary_data[cols].sort_values("freshness_index"),
     use_container_width=True,
     hide_index=True
 )
@@ -530,7 +530,7 @@ for operator, group_op in df.groupby("Operator"):
     qrs = group_op["QR"].dropna().unique()
     distances.append({
         "Operator": operator,
-        "Distanza_km": total_dist,
+        "Distance_km": total_dist,
         "QR_list": qrs
     })
 
@@ -543,7 +543,7 @@ st.subheader("🌱 CO₂ Emissions by QR (based on travelled distance)")
 col1, col2, col3 = st.columns([1.5, 1.5, 1])
 # 1️⃣ Filtra per operatore
 operatori = sorted(df_distance["Operator"].dropna().unique().tolist())
-selected_operator = col1.multiselect("👷 Operatore", operatori, help="Seleziona uno o più operatori")
+selected_operator = col1.multiselect("👷 Operator", operatori, help="Select one or more operators")
 # 2️⃣ Determina i QR disponibili in base all'operatore selezionato
 if selected_operator:
     qrs_filtrabili = sorted([
@@ -556,13 +556,13 @@ else:
     # Nessun operatore selezionato → mostra tutti i QR
     qrs_filtrabili = sorted(df["QR"].dropna().unique().tolist())
 
-selected_qr_filter = col2.multiselect("🔢 QR Code", qrs_filtrabili, help="Filtra per codice QR")
+selected_qr_filter = col2.multiselect("🔢 QR Code", qrs_filtrabili, help="Filter by QR code")
 
 # 3️⃣ Filtro per intervallo di distanza
-min_dist, max_dist = float(df_distance["Distanza_km"].min()), float(df_distance["Distanza_km"].max())
+min_dist, max_dist = float(df_distance["Distance_km"].min()), float(df_distance["Distance_km"].max())
 
 if min_dist < max_dist:
-    selected_distance = col3.slider("🚚 Distanza (km)", min_dist, max_dist, (min_dist, max_dist))
+    selected_distance = col3.slider("🚚 Distance (km)", min_dist, max_dist, (min_dist, max_dist))
 else:
     col3.info("Filtro distanza non disponibile (dati insufficienti).")
     selected_distance = (min_dist, max_dist)
@@ -574,7 +574,7 @@ fattore_emissione = fattori[tipo]
 # --- Calcolo emissioni CO₂ e ripartizione tra QR ---
 expanded_rows = []
 for _, row in df_distance.iterrows():
-    emissioni_totali = row["Distanza_km"] * fattore_emissione
+    emissioni_totali = row["Distance_km"] * fattore_emissione
     qrs = row["QR_list"]
     if len(qrs) > 0:
         emissioni_per_qr = emissioni_totali / len(qrs)
@@ -582,7 +582,7 @@ for _, row in df_distance.iterrows():
             expanded_rows.append({
                 "Operator": row["Operator"],
                 "QR": qr,
-                "Distanza_km": row["Distanza_km"],
+                "Distance_km": row["Distance_km"],
                 "Emissioni_CO2_kg": emissioni_per_qr
             })
 
@@ -594,7 +594,7 @@ if selected_operator:
 if selected_qr_filter:
     df_emissioni_filtered = df_emissioni_filtered[df_emissioni_filtered["QR"].isin(selected_qr_filter)]
 df_emissioni_filtered = df_emissioni_filtered[
-    df_emissioni_filtered["Distanza_km"].between(*selected_distance)
+    df_emissioni_filtered["Distance_km"].between(*selected_distance)
 ]
 
 # --- Visualizzazione tabella ---
@@ -616,8 +616,8 @@ with ai_container:
     st.subheader("🤖 AI Analyst")
 
     st.markdown(
-        "Clicca **Analizza Dashboard** per generare automaticamente un report "
-        "basato sui dati elaborati (freschezza, emissioni, spedizioni, operatori)."
+        "Click **Analyze Dashboard** to automatically generate a report"
+        "based on the processed data (freshness, emissions, shipments, operators)."
     )
 
     api_key = st.secrets.get("OPENAI_API_KEY")
@@ -634,19 +634,19 @@ with ai_container:
 
         # Mostra spinner e genera solo al click
         if genera_report:
-            with st.spinner("Analisi in corso..."):
-                sintesi = {
-                    "Totale spedizioni": len(df),
+            with st.spinner("Analysis in progress..."):
+                summary = {
+                    "Total shipments": len(df),
                     "% compliant": round(perc_compliant, 2),
-                    "% incidenti": round(perc_incident, 2),
-                    "Costo sprechi (€)": waste_cost,
-                    "CO2 totale stimata (kg)": round(totale_co2, 2),
-                    "Media indice freschezza": round(df["indice_freschezza"].mean(), 2),
-                    "Operatori unici": df["Operator"].nunique(),
-                    "Prodotti analizzati": df["Product"].nunique(),
+                    "% incidents": round(perc_incident, 2),
+                    "Waste cost (€)": waste_cost,
+                    "Total estimated CO2 (kg)": round(totale_co2, 2),
+                    "Average freshness index": round(df["freshness_index"].mean(), 2),
+                    "Unique operators": df["Operator"].nunique(),
+                    "Products analyzed": df["Product"].nunique(),
                 }
 
-                prompt = f"""Sei un data analyst. Analizza i dati seguenti e genera un report completo, con osservazioni e raccomandazioni. Dati sintetici: {sintesi}
+                prompt = f"""Sei un data analyst. Analizza i dati seguenti e genera un report completo, con osservazioni e raccomandazioni. Dati sintetici: {summary}
                             Rispondi in modo chiaro e strutturato, suddividendo in:
                             - Panoramica generale
                             - Punti critici o anomalie
@@ -666,15 +666,15 @@ with ai_container:
 
         # Mostra report se già generato
         if st.session_state.report_generato:
-            st.success("✅ Analisi completata")
+            st.success("✅ Analysis completed")
             st.markdown("### 📈 Report AI")
             st.write(st.session_state.report_ai)
 
-            st.markdown("### 💬 Chiedi altro sui dati")
-            user_question = st.text_input("Scrivi una domanda (es. 'Quale prodotto ha la freschezza media più bassa?')")
+            st.markdown("### 💬 Ask more about the data")
+            user_question = st.text_input("Write a question")
 
             if user_question:
-                with st.spinner("Elaborazione risposta..."):
+                with st.spinner("Processing response..."):
                     context = df.describe(include="all").to_string()
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
@@ -685,5 +685,5 @@ with ai_container:
                         ],
                         temperature=0.4,
                     )
-                    st.markdown("### 🔍 Risposta AI")
+                    st.markdown("### 🔍 AI response")
                     st.write(response.choices[0].message.content)
