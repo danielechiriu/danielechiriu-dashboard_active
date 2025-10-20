@@ -370,6 +370,7 @@ try:
         st.session_state.selected_qr = "Tutti"
     st.session_state.df_selection = new_selection
 
+    st.subheader("📜 Scan history and details")
     unique_qr = filtered["QR"].dropna().unique().tolist()
     selected_qr = st.selectbox(
         "Seleziona QR per visualizzare solo le sue scansioni (o clicca una riga nella tabella)",
