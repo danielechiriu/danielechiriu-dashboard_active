@@ -76,8 +76,7 @@ thead tr th {
 """, unsafe_allow_html=True)
 
 # Link al file Drive (pubblico, leggibile)
-#file_id = "1Zp_2qP8Td1TVMdbY9mlzOHYxIlICmNZL"
-file_id = "1kLpYked6VIDSh4P7wfOtkGG3N-6K1KYO"
+file_id = "1Zp_2qP8Td1TVMdbY9mlzOHYxIlICmNZL"
 url = f"https://drive.google.com/uc?id={file_id}&export=download"
 
 geolocator = Nominatim(user_agent="dashboard_active_label")
