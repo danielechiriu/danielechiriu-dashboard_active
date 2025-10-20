@@ -372,9 +372,14 @@ try:
 
     st.subheader("📜 Scan history and details")
     unique_qr = filtered["QR"].dropna().unique().tolist()
+
+    options = ["Tutti"] + unique_qr
+    if st.session_state.selected_qr not in options:
+        st.session_state.selected_qr = "Tutti"
+
     selected_qr = st.selectbox(
         "Seleziona QR per visualizzare solo le sue scansioni (o clicca una riga nella tabella)",
-        ["Tutti"] + unique_qr,
+        options,
         key="selected_qr"
     )
 
