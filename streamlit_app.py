@@ -316,8 +316,17 @@ try:
 
     st.markdown("---")
 
-    operatore = st.text_input("Filtra per operatore (es: Ricci, Chiriu, Pinna)")
-    filtered = df[df["Operator"].str.lower() == operatore.lower()] if operatore else df
+    operatori_disponibili = sorted(df["Operator"].dropna().unique().tolist())
+
+    operatori_selezionati = st.multiselect(
+        "Filtra per operatore",
+        operatori_disponibili,
+        help="Seleziona uno o più operatori per filtrare la tabella principale"
+    )
+    if operatori_selezionati:
+        filtered = df[df["Operator"].isin(operatori_selezionati)]
+    else:
+        filtered = df
 
     colonne_da_mostrare = [
         "Operator", "Reading date", "Read value", "Effective T", "QR",
@@ -327,18 +336,40 @@ try:
     if 'selected_qr' not in st.session_state:
         st.session_state.selected_qr = "Tutti"
 
-    st.write("Clicca su una riga per vedere lo storico e la mappa di quel QR.")
+    if 'df_selection' not in st.session_state:
+        st.session_state.df_selection = []
+
+    st.write("Tabella delle ultime scansioni. Clicca su una riga per vedere lo storico e la mappa di quel QR.")
+
+    filtered_last_scan = filtered.dropna(subset=["Reading date"]) \
+        .sort_values("Reading date") \
+        .groupby("QR") \
+        .tail(1)
+
+    df_sorted = filtered_last_scan.copy()
+    if st.session_state.selected_qr != "Tutti":
+        df_sorted['_sort_key'] = (df_sorted['QR'] == st.session_state.selected_qr)
+        df_sorted = df_sorted.sort_values(by='_sort_key', ascending=False).drop(columns=['_sort_key'])
+
+    df_to_display = df_sorted[colonne_da_mostrare]
 
     event = st.dataframe(
-        filtered[colonne_da_mostrare],
+        df_to_display,  # Mostra il DF ordinato e filtrato per colonne
         on_select="rerun",
         selection_mode="single-row"
     )
 
-    if event.selection.rows:
-        selected_row_index = event.selection.rows[0]
-        qr_from_click = filtered.iloc[selected_row_index]["QR"]
+    new_selection = event.selection.rows
+    old_selection = st.session_state.df_selection
+
+    if new_selection:
+        selected_row_index = new_selection[0]
+        qr_from_click = df_sorted.iloc[selected_row_index]["QR"]
         st.session_state.selected_qr = qr_from_click
+
+    elif not new_selection and old_selection:
+        st.session_state.selected_qr = "Tutti"
+    st.session_state.df_selection = new_selection
 
     unique_qr = filtered["QR"].dropna().unique().tolist()
     selected_qr = st.selectbox(
@@ -353,7 +384,6 @@ try:
         # --- 📜 Storico delle scansioni ---
         storico = map_data.sort_values("Reading date", ascending=True)
 
-        st.subheader("📜 Scan History")
         st.dataframe(
             storico,
             use_container_width=True,
