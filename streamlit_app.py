@@ -690,74 +690,124 @@ with ai_container:
     st.subheader("🤖 AI Analyst")
 
     st.markdown(
-        "Click **Analyze Dashboard** to automatically generate a report"
+        "Click one of the buttons below to automatically generate a report"
         "based on the processed data (freshness, emissions, shipments, operators)."
     )
 
     api_key = st.secrets.get("OPENAI_API_KEY")
 
     if not api_key:
-        st.warning("⚠️ Nessuna API Key configurata. Inseriscila in Streamlit Secrets o direttamente nel codice.")
+        st.warning("⚠️ No API Key configured. Add it to Streamlit Secrets or directly in the code.")
     else:
         client = OpenAI(api_key=api_key)
+        if "report_ai" not in st.session_state:
+            st.session_state.report_ai = None
+        if "report_lang" not in st.session_state:
+            st.session_state.report_lang = None
 
-        if "report_generato" not in st.session_state:
-            st.session_state.report_generato = False
+        # --- Pulsanti per la lingua ---
+        col1, col2, col3 = st.columns([1.5, 1.5, 3])
+        with col1:
+            genera_report_it = st.button("📊 Genera Report (IT)")
+        with col2:
+            genera_report_en = st.button("📊 Generate Report (EN)")
 
-        genera_report = st.button("📊 Report Dashboard")
+        summary = {
+            "Total shipments": len(df),
+            "% compliant": round(perc_compliant, 2),
+            "% incidents": round(perc_incident, 2),
+            "Waste cost (€)": waste_cost,
+            "Total estimated CO2 (kg)": round(totale_co2, 2),
+            "Average freshness index": round(df["freshness_index"].mean(), 2),
+            "Unique operators": df["Operator"].nunique(),
+            "Products analyzed": df["Product"].nunique(),
+        }
 
-        # Mostra spinner e genera solo al click
-        if genera_report:
-            with st.spinner("Analysis in progress..."):
-                summary = {
-                    "Total shipments": len(df),
-                    "% compliant": round(perc_compliant, 2),
-                    "% incidents": round(perc_incident, 2),
-                    "Waste cost (€)": waste_cost,
-                    "Total estimated CO2 (kg)": round(totale_co2, 2),
-                    "Average freshness index": round(df["freshness_index"].mean(), 2),
-                    "Unique operators": df["Operator"].nunique(),
-                    "Products analyzed": df["Product"].nunique(),
-                }
+        # --- Definizioni dei Prompt e testi ---
+        prompts = {
+            'it': {
+                'spinner': "Analisi in corso...",
+                'system': "Sei un analista esperto di logistica e qualità del trasporto alimentare.",
+                'user': f"""Sei un data analyst. Analizza i dati seguenti e genera un report completo.
+                         Rispondi in modo chiaro e strutturato, **IN ITALIANO**, suddividendo in:
+                         - Panoramica generale
+                         - Punti critici o anomalie
+                         - Raccomandazioni operative
 
-                prompt = f"""Sei un data analyst. Analizza i dati seguenti e genera un report completo, con osservazioni e raccomandazioni. Dati sintetici: {summary}
-                            Rispondi in modo chiaro e strutturato, suddividendo in:
-                            - Panoramica generale
-                            - Punti critici o anomalie
-                            - Raccomandazioni operative"""
+                         Dati sintetici: {summary}""",
+                'success': "✅ Analisi completata (IT)",
+                'follow_up_header': "### 💬 Fai altre domande sui dati (IT)",
+                'follow_up_input': "Scrivi una domanda",
+                'spinner_question': "Elaborazione risposta...",
+                'response_header': "### 🔍 Risposta AI",
+                'context_system': "Sei un assistente analitico che risponde **IN ITALIANO** su dati di logistica e qualità alimentare."
+            },
+            'en': {
+                'spinner': "Analysis in progress...",
+                'system': "You are an expert analyst in logistics and food transport quality.",
+                'user': f"""You are a data analyst. Analyze the following data and generate a complete report.
+                         Respond clearly and structured, **IN ENGLISH**, divided into:
+                         - General overview
+                         - Critical points or anomalies
+                         - Operational recommendations
 
+                         Synthetic data: {summary}""",
+                'success': "✅ Analysis completed (EN)",
+                'follow_up_header': "### 💬 Ask more about the data (EN)",
+                'follow_up_input': "Write a question",
+                'spinner_question': "Processing response...",
+                'response_header': "### 🔍 AI Response",
+                'context_system': "You are an analytical assistant answering **IN ENGLISH** about logistics and food quality data."
+            }
+        }
+
+        lang_to_generate = None
+        if genera_report_it:
+            lang_to_generate = 'it'
+        elif genera_report_en:
+            lang_to_generate = 'en'
+
+        # --- Generazione Report ---
+        if lang_to_generate:
+            T = prompts[lang_to_generate]
+            with st.spinner(T['spinner']):
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
-                        {"role": "system", "content": "Sei un analista esperto di logistica e qualità del trasporto alimentare."},
-                        {"role": "user", "content": prompt}
+                        {"role": "system", "content": T['system']},
+                        {"role": "user", "content": T['user']}
                     ],
                     temperature=0.5,
                 )
 
                 st.session_state.report_ai = response.choices[0].message.content
-                st.session_state.report_generato = True
+                st.session_state.report_lang = lang_to_generate
 
-        # Mostra report se già generato
-        if st.session_state.report_generato:
-            st.success("✅ Analysis completed")
-            st.markdown("### 📈 Report AI")
+        if st.session_state.report_ai:
+
+            T = prompts.get(st.session_state.report_lang, prompts['en'])
+
+            st.success(T['success'])
+            st.markdown("### 📈 AI Report")
             st.write(st.session_state.report_ai)
 
-            st.markdown("### 💬 Ask more about the data")
-            user_question = st.text_input("Write a question")
+            # --- Sezione Domande Aggiuntive ---
+            st.markdown(T['follow_up_header'])
+            user_question = st.text_input(
+                T['follow_up_input'],
+                key=f"q_input_{st.session_state.report_lang}"
+            )
 
             if user_question:
-                with st.spinner("Processing response..."):
+                with st.spinner(T['spinner_question']):
                     context = df.describe(include="all").to_string()
                     response = client.chat.completions.create(
                         model="gpt-4o-mini",
                         messages=[
-                            {"role": "system",
-                             "content": "Sei un assistente analitico che risponde su dati di logistica e qualità alimentare."},
+                            {"role": "system", "content": T['context_system']},
                             {"role": "user", "content": f"Domanda: {user_question}\n\nContesto dati:\n{context}"}
                         ],
                         temperature=0.4,
                     )
-                    st.markdown("### 🔍 AI response")
+                    st.markdown(T['response_header'])
                     st.write(response.choices[0].message.content)
