@@ -327,6 +327,12 @@ try:
     else:
         filtered = df
 
+    filtered = filtered.copy()
+
+    filtered["Reading date"] = pd.to_datetime(filtered["Reading date"], dayfirst=True, errors="coerce")
+    filtered["Expiry date (initial)"] = pd.to_datetime(filtered["Expiry date (initial)"], dayfirst=True, errors="coerce")
+    filtered["Writing date"] = pd.to_datetime(filtered["Writing date"], dayfirst=True, errors="coerce")
+
     colonne_da_mostrare = [
         "Operator", "Reading date", "Read value", "Effective T", "QR",
         "Desired T", "Product", "freshness_index"
@@ -345,17 +351,22 @@ try:
         .groupby("QR") \
         .tail(1)
 
-    df_sorted = filtered_last_scan.copy()
-    if st.session_state.selected_qr != "All":
-        df_sorted['_sort_key'] = (df_sorted['QR'] == st.session_state.selected_qr)
-        df_sorted = df_sorted.sort_values(by='_sort_key', ascending=False).drop(columns=['_sort_key'])
+    df_sorted = filtered_last_scan.sort_values(
+        "Reading date", ascending=False
+    ).reset_index(drop=True).copy()
 
-    df_to_display = df_sorted[colonne_da_mostrare]
+    df_to_display = df_sorted[colonne_da_mostrare].copy()
 
     event = st.dataframe(
-        df_to_display,  # Mostra il DF ordinato e filtrato per colonne
+        df_to_display,
         on_select="rerun",
-        selection_mode="single-row"
+        selection_mode="single-row",
+        column_config={
+            "Reading date": st.column_config.DatetimeColumn(
+                "Reading date",
+                format="DD/MM/YYYY",
+            )
+        }
     )
 
     new_selection = event.selection.rows
@@ -392,7 +403,21 @@ try:
         st.dataframe(
             storico,
             use_container_width=True,
-            hide_index=True
+            hide_index=True,
+            column_config={
+                "Reading date": st.column_config.DatetimeColumn(
+                    "Reading date",
+                    format="DD/MM/YYYY",
+                ),
+                "Writing date": st.column_config.DatetimeColumn(
+                    "Writing date",
+                    format="DD/MM/YYYY",
+                ),
+                "Expiry date (initial)": st.column_config.DatetimeColumn(
+                    "Expiry date (initial)",
+                    format="DD/MM/YYYY",
+                )
+            }
         )
         map_zoom = 6
     else:
@@ -452,13 +477,14 @@ except Exception as e:
 st.markdown("---")
 st.subheader("❄️ QR Freshness Summary")
 
-# Convertiamo le date in datetime per ordinamento
 df["Reading date"] = pd.to_datetime(df["Reading date"], dayfirst=True, errors="coerce")
+
+df["Expiry date (initial)"] = pd.to_datetime(df["Expiry date (initial)"], dayfirst=True, errors="coerce")
+df["Writing date"] = pd.to_datetime(df["Writing date"], dayfirst=True, errors="coerce")
 
 first_scans = df.loc[df.groupby("QR")["Reading date"].idxmin()][["QR", "Reading date"]]
 first_scans = first_scans.rename(columns={"Reading date": "First Scan Date"})
 
-# Prendiamo l'ultima scansione per ogni QR
 last_scans = (
     df.sort_values("Reading date")
       .groupby("QR")
@@ -467,7 +493,6 @@ last_scans = (
 )
 
 last_scans = pd.merge(last_scans, first_scans, on="QR", how="left")
-# Calcolo dell'indice di freschezza
 last_scans["freshness_index"] = last_scans.apply(calcola_indice_freschezza, axis=1)
 
 # Aggiungiamo una valutazione qualitativa
@@ -480,8 +505,6 @@ def freshness_status(value):
         return "🔴 Poor"
 
 last_scans["Status"] = last_scans["freshness_index"].apply(freshness_status)
-last_scans["First Scan Date"] = pd.to_datetime(last_scans["First Scan Date"]).dt.strftime('%d/%m/%Y')
-last_scans["Expiry date (initial)"] = pd.to_datetime(last_scans["Expiry date (initial)"]).dt.strftime('%d/%m/%Y')
 # 🔎 Se è stato selezionato un QR, filtriamo la tabella, altrimenti mostriamo tutti
 if selected_qr != "All":
     summary_data = last_scans[last_scans["QR"] == selected_qr]
@@ -501,7 +524,17 @@ summary_data_display = summary_data[cols].rename(columns={
 st.dataframe(
     summary_data[cols].sort_values("freshness_index"),
     use_container_width=True,
-    hide_index=True
+    hide_index=True,
+    column_config={
+        "First Scan Date": st.column_config.DatetimeColumn(
+            "First Scan Date",
+            format="DD/MM/YYYY",
+        ),
+        "Expiry date (initial)": st.column_config.DatetimeColumn(
+            "Expiry date (initial)",
+            format="DD/MM/YYYY",
+        )
+    }
 )
 
 def haversine(lat1, lon1, lat2, lon2):
@@ -583,7 +616,7 @@ for _, row in df_distance.iterrows():
                 "Operator": row["Operator"],
                 "QR": qr,
                 "Distance_km": row["Distance_km"],
-                "Emissioni_CO2_kg": emissioni_per_qr
+                "Emissions_CO2_kg": emissioni_per_qr
             })
 
 df_emissioni = pd.DataFrame(expanded_rows)
@@ -599,13 +632,13 @@ df_emissioni_filtered = df_emissioni_filtered[
 
 # --- Visualizzazione tabella ---
 st.dataframe(
-    df_emissioni_filtered.sort_values("Emissioni_CO2_kg", ascending=False),
+    df_emissioni_filtered.sort_values("Emissions_CO2_kg", ascending=False),
     use_container_width=True,
     hide_index=True
 )
 
 # --- Metrica totale ---
-totale_co2 = df_emissioni_filtered["Emissioni_CO2_kg"].sum()
+totale_co2 = df_emissioni_filtered["Emissions_CO2_kg"].sum()
 st.metric("Total estimated CO₂", f"{totale_co2:.2f} kg")
 
 # --- Sezione finale: AI Analyst ---
