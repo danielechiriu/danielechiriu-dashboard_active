@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
+
+import folium
+from folium.plugins import AntPath
+from streamlit_folium import st_folium
+
 from math import radians, sin, cos, sqrt, atan2
 from geopy.geocoders import Nominatim
 from geopy.extra.rate_limiter import RateLimiter
@@ -420,55 +424,94 @@ try:
             }
         )
         map_zoom = 6
+        map_data_for_plot = storico
     else:
         map_data = filtered
         map_zoom = 4
 
     # --- Mappa con Plotly ---
+    st.subheader("🗺️ Geolocation of QR Scans")
+
     if not map_data.empty and "LAT" in map_data.columns and "LON" in map_data.columns:
-        map_data["freshness_index"] = map_data.apply(calcola_indice_freschezza, axis=1)
 
-        fig_map = px.scatter_mapbox(
-            map_data,
-            lat="LAT",
-            lon="LON",
-            color="freshness_index",
-            hover_data=[
-                "QR",
-                "Item ID",
-                "Product",
-                "Desired T",
-                "Effective T",
-                "Days left",
-                "freshness_index",
-                "Operator",
-                "Province",
-                "Reading date",
-                "Reading hour"
-            ],
-            color_continuous_scale="RdYlGn",
-            range_color=(0, 100),
-            mapbox_style="open-street-map",
-            zoom=map_zoom,
-            height=550
-        )
+        map_data_valid = map_data.dropna(subset=["LAT", "LON"])
 
-        fig_map.update_traces(marker=dict(size=15, opacity=0.85))
-        fig_map.update_layout(
-            mapbox_style="carto-positron",
-            margin=dict(l=0, r=0, t=30, b=0),
-            paper_bgcolor="#f9f9f9"
-        )
+        if map_data_valid.empty:
+            st.warning("Nessun dato GPS valido da mostrare sulla mappa.")
+        else:
+            center_lat = map_data_valid["LAT"].mean()
+            center_lon = map_data_valid["LON"].mean()
 
-        config = {
-            "scrollZoom": True,
-            "displayModeBar": True,
-            "displaylogo": False,
-            "modeBarButtonsToRemove": ["lasso2d", "select2d", "zoomIn2d", "zoomOut2d"]
-        }
+            m = folium.Map(
+                location=[center_lat, center_lon],
+                zoom_start=map_zoom,
+                tiles="cartodbdarkmatter"
+            )
 
-        st.subheader("🗺️ Geolocation of QR Scans")
-        st.plotly_chart(fig_map, use_container_width=True, config=config)
+            def get_color(freshness):
+                if pd.isna(freshness): return "grey"
+                if freshness >= 80: return "green"
+                if freshness >= 50: return "orange"
+                return "red"
+
+            for _, row in map_data_valid.iterrows():
+                tooltip_html = f"""
+                        <b>QR:</b> {row['QR']}<br>
+                        <b>Prodotto:</b> {row['Product']}<br>
+                        <b>Freschezza:</b> {row['freshness_index']}%<br>
+                        <b>Data:</b> {row['Reading date'].strftime('%d/%m/%Y')}<br>
+                        <b>Ora:</b> {row['Reading hour']}
+                    """
+
+                folium.CircleMarker(
+                    location=(row["LAT"], row["LON"]),
+                    radius=7,
+                    color=get_color(row["freshness_index"]),
+                    fill=True,
+                    fill_color=get_color(row["freshness_index"]),
+                    fill_opacity=0.7,
+                    tooltip=folium.Tooltip(tooltip_html)
+                ).add_to(m)
+
+            if selected_qr != "All":
+                line_data = map_data_for_plot.dropna(subset=["LAT", "LON"])
+
+                if len(line_data) > 1:
+                    path_coords = list(zip(line_data["LAT"], line_data["LON"]))
+
+                    AntPath(
+                        locations=path_coords,
+                        use_hardware_acceleration=True,
+                        delay=1000,
+                        dash_array=[10, 15],
+                        weight=5,
+                        color="#00AEEF",
+                        pulse_color="#FFFFFF",
+                        reverse=False,
+                    ).add_to(m)
+
+                    min_lat = line_data["LAT"].min()
+                    max_lat = line_data["LAT"].max()
+                    min_lon = line_data["LON"].min()
+                    max_lon = line_data["LON"].max()
+
+                    bounds = [[min_lat, min_lon], [max_lat, max_lon]]
+                    m.fit_bounds(bounds, padding=(10, 10))
+
+            st.markdown("""
+                <style>
+                    .leaflet-control-attribution {
+                        display: none !important;
+                    }
+                </style>
+            """, unsafe_allow_html=True)
+
+            st_folium(
+                m,
+                use_container_width=True,
+                height=550,
+                returned_objects=[]
+            )
 
 except Exception as e:
     st.error(f"Errore nel caricamento del file: {e}")
@@ -505,7 +548,7 @@ def freshness_status(value):
         return "🔴 Poor"
 
 last_scans["Status"] = last_scans["freshness_index"].apply(freshness_status)
-# 🔎 Se è stato selezionato un QR, filtriamo la tabella, altrimenti mostriamo tutti
+
 if selected_qr != "All":
     summary_data = last_scans[last_scans["QR"] == selected_qr]
     st.caption(f"Showing latest freshness data for QR **{selected_qr}**")
@@ -513,7 +556,6 @@ else:
     summary_data = last_scans
     st.caption("Showing latest freshness data for all QR codes")
 
-# Mostriamo la tabella riassuntiva
 cols = ["QR", "First Scan Date", "Expiry date (initial)", "Days left", "Desired T", "Effective T", "freshness_index", "Status"]
 summary_data_display = summary_data[cols].rename(columns={
     "First Scan Date": "First Scan Date",
@@ -574,10 +616,9 @@ st.markdown("---")
 st.subheader("🌱 CO₂ Emissions by QR (based on travelled distance)")
 
 col1, col2, col3 = st.columns([1.5, 1.5, 1])
-# 1️⃣ Filtra per operatore
+
 operatori = sorted(df_distance["Operator"].dropna().unique().tolist())
 selected_operator = col1.multiselect("👷 Operator", operatori, help="Select one or more operators")
-# 2️⃣ Determina i QR disponibili in base all'operatore selezionato
 if selected_operator:
     qrs_filtrabili = sorted([
         qr
